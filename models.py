@@ -451,3 +451,29 @@ class AnalyticsService:
 
     def forward_event_to_recommendation(self, event: AnalyticsEvent) -> None:
         pass
+
+class ModerationService:
+    def moderate_content(self, item_label: str) -> str:
+        return f"Контент «{item_label}» проверен (заглушка)"
+
+    def assist_user(self, user_email: str, issue: str) -> str:
+        return f"Запрос поддержки для {user_email}: {issue} (заглушка)"
+
+class OrganizerService:
+    def create_event(self, title: str, venue: str) -> Exhibition:
+        return Exhibition(
+                id=99999,
+                name=title or "Новое мероприятие",
+                description="Мероприятие создано организатором",
+                start_date=date.today(),
+                end_date=date.today(),
+                venue=venue or "Площадка проведения",
+                format_label="Живая и онлайн",
+            )
+
+    def add_event_info(self, exhibition: Exhibition, info: str) -> None:
+        if info.strip():
+            exhibition.description = info.strip()
+
+    def configure_ticket_sales(self, exhibition: Exhibition) -> None:
+        exhibition.open_ticket_sales()

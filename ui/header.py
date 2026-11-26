@@ -5,6 +5,13 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from state_machine import InterfaceState
 
+nav_items: list[tuple[str, InterfaceState]] = [
+            ("Выставки", InterfaceState.EXHIBITIONS_LIST),
+            ("Заказы", InterfaceState.MY_ORDERS),
+            ("Билеты", InterfaceState.MY_TICKETS),
+            ("Панель роли", InterfaceState.ROLE_WORKSPACE),
+            ("Личный кабинет", InterfaceState.CABINET),
+        ]
 
 class TopNavBar(QWidget):
     navigate_requested = pyqtSignal(InterfaceState)

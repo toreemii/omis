@@ -87,3 +87,25 @@ class InterfaceStateMachine:
         if self.can_transition(target):
             self.current_state = target
         return self.current_state
+
+class InterfaceState(str, Enum):
+    LOGIN = "Вход пользователя"
+    EXHIBITIONS_LIST = "Список выставок"
+    EXHIBITION_PAGE = "Страница выставки"
+    COMPANY_SHOWCASE = "Онлайн-витрина компании"
+    CART_CHECKOUT = "Корзина и оформление"
+    CABINET = "Личный кабинет"
+    MY_TICKETS = "Мои билеты"
+    TICKET_QR = "Билет (QR-код)"
+    MY_ORDERS = "Мои заказы"
+    ROLE_WORKSPACE = "Панель роли"
+    EXIT = "Выход из программы"
+
+
+TOP_MENU_STATES: tuple[InterfaceState, ...] = (
+    InterfaceState.EXHIBITIONS_LIST,
+    InterfaceState.MY_ORDERS,
+    InterfaceState.MY_TICKETS,
+    InterfaceState.ROLE_WORKSPACE,
+    InterfaceState.CABINET,
+)

@@ -83,7 +83,6 @@ class QrPlaceholderWidget(QWidget):
         painter.end()
 
 
-# 1. Вход (1_Вход.png)
 class LoginScreen(QWidget):
     login_submitted = pyqtSignal(str, str)
 
@@ -127,7 +126,6 @@ class LoginScreen(QWidget):
         layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignVCenter)
 
 
-# 2. Список выставок (2__Список_выставок.png)
 class ExhibitionsListScreen(QWidget):
     open_exhibition = pyqtSignal(Exhibition)
 
@@ -216,7 +214,6 @@ class ExhibitionsListScreen(QWidget):
             self.cards_layout.addWidget(card)
 
 
-# 3. Страница выставки (3_Страница_выставки.png)
 class ExhibitionDetailScreen(QWidget):
     open_company = pyqtSignal(Company)
     buy_ticket_clicked = pyqtSignal(Exhibition)
@@ -290,7 +287,6 @@ class ExhibitionDetailScreen(QWidget):
         self.companies_row.addStretch()
 
 
-# 4. Онлайн-витрина компании (4_Компнии.png)
 class CompanyShowcaseScreen(QWidget):
     add_to_cart_clicked = pyqtSignal(Product)
 
@@ -352,7 +348,6 @@ class CompanyShowcaseScreen(QWidget):
             self.grid.addWidget(card, idx // 4, idx % 4)
 
 
-# 5. Корзина и оформление (5__Корзина_и_оформление.png)
 class CartCheckoutScreen(QWidget):
     pay_clicked = pyqtSignal(str)
 
@@ -441,7 +436,6 @@ class CartCheckoutScreen(QWidget):
         self.total_lbl.setText(f"Итого: {subtotal + delivery} BYN")
 
 
-# 6. Личный кабинет (6_Личный_кабинет.png)
 class CabinetScreen(QWidget):
     open_tickets = pyqtSignal()
     open_orders = pyqtSignal()
@@ -513,7 +507,6 @@ class CabinetScreen(QWidget):
         self.phone_lbl.setText(user.phone)
 
 
-# 7. Мои билеты (7_Мои_билеты.png)
 class MyTicketsScreen(QWidget):
     show_qr_clicked = pyqtSignal(Ticket)
 
@@ -591,7 +584,6 @@ class MyTicketsScreen(QWidget):
             self.list_layout.addWidget(card)
 
 
-# 8. Билет (8_Билет.png)
 class TicketDetailScreen(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -631,7 +623,6 @@ class TicketDetailScreen(QWidget):
         self.meta_lbl.setText(f"{ticket.visit_date} · Время · Код: {ticket.qr_code}")
 
 
-# 9. Мои заказы (9-Мои_заказы.png)
 class MyOrdersScreen(QWidget):
     def __init__(self, orders: list[Order], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -699,6 +690,102 @@ class MyOrdersScreen(QWidget):
             c_layout.addLayout(row)
             self.orders_layout.addWidget(card)
 
+
+from PyQt6.QtWidgets import QComboBox
+
+
+ROLE_USE_CASES: dict[str, list[tuple[str, str]]] = {
+    "Посетитель": [
+        ("Найти выставку в каталоге", "Переход к каталогу выставок и поиску"),
+        ("Купить входной билет и получить QR-код", "Оформление билета и просмотр QR-кода"),
+        ("Запросить карту зала и маршрут до стенда", "Построение маршрута до стенда компании"),
+        ("Просмотреть витрину и оформить заказ", "Добавление товаров в корзину и оплата"),
+    ],
+    "Организатор": [
+        ("Создать мероприятие", "Заглушка создания страницы выставки/ярмарки"),
+        ("Добавить информацию", "Заглушка заполнения описания, даты и программы"),
+        ("Настроить продажу билетов", "Заглушка открытия и параметров продажи билетов"),
+    ],
+    "Компания-участник": [
+        ("Зарегистрироваться на выставке", "Заглушка подачи заявки на участие в выставке"),
+        ("Загрузить каталоги и фото", "Заглушка загрузки товаров, фото и PDF-каталогов"),
+        ("Получить подтверждение регистрации", "Заглушка статуса подтверждения участия"),
+        ("Получить уведомление о новой продаже", "Заглушка оповещения о заказе от посетителя"),
+    ],
+    "Модератор / Поддержка": [
+        ("Модерировать контент", "Заглушка проверки материалов выставок и компаний"),
+        ("Помогать при сбоях пользователям", "Заглушка обработки обращений и инцидентов"),
+    ],
+}
+
+
+class RoleWorkspaceScreen(QWidget):
+    """Экран сценариев выбранной роли по диаграмме вариантов использования."""
+
+    def __init__(self, user: User, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.user = user
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(36, 26, 36, 26)
+        root.setSpacing(16)
+
+        header_row = QHBoxLayout()
+        self.title_lbl = QLabel("Панель роли")
+        self.title_lbl.setObjectName("ScreenTitle")
+        self.role_badge = QLabel(user.role.name if user.role else "Посетитель")
+        self.role_badge.setObjectName("StatusBadge")
+        header_row.addWidget(self.title_lbl)
+        header_row.addWidget(self.role_badge)
+        header_row.addStretch()
+        root.addLayout(header_row)
+
+        self.status_hint = QLabel("Выберите действие для проверки заглушки варианта использования.")
+        self.status_hint.setObjectName("MutedText")
+        root.addWidget(self.status_hint)
+
+        self.cards_layout = QVBoxLayout()
+        self.cards_layout.setSpacing(12)
+        root.addLayout(self.cards_layout)
+        root.addStretch()
+
+        self.refresh_role(user)
+
+    def refresh_role(self, user: User) -> None:
+        self.user = user
+        role_name = user.role.name if user.role else "Посетитель"
+        self.role_badge.setText(role_name)
+        self.title_lbl.setText(f"Панель роли — {role_name}")
+
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for action_title, action_desc in ROLE_USE_CASES.get(role_name, ROLE_USE_CASES["Посетитель"]):
+            card, c_layout = make_card(14)
+            row = QHBoxLayout()
+
+            text_col = QVBoxLayout()
+            t_lbl = QLabel(action_title)
+            t_lbl.setObjectName("CardTitle")
+            d_lbl = QLabel(action_desc)
+            d_lbl.setObjectName("MutedText")
+            text_col.addWidget(t_lbl)
+            text_col.addWidget(d_lbl)
+
+            run_btn = QPushButton("Выполнить")
+            run_btn.setObjectName("PrimaryBtn")
+            run_btn.clicked.connect(
+                lambda _, name=action_title: self.status_hint.setText(
+                    f"[{role_name}] Запущен сценарий «{name}» (заглушка)."
+                )
+            )
+
+            row.addLayout(text_col, stretch=1)
+            row.addWidget(run_btn)
+            c_layout.addLayout(row)
+            self.cards_layout.addWidget(card)
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
