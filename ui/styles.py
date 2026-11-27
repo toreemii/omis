@@ -88,6 +88,14 @@ QPushButton#FilterChip:checked {
     color: #FFFFFF;
 }
 
+QComboBox {
+    background-color: #FFFFFF;
+    border: 2px solid #0B0F17;
+    padding: 7px 10px;
+    font-size: 13px;
+    color: #0B0F17;
+}
+
 QLabel#StatusBadge {
     background-color: #DCEBFA;
     color: #1570D8;

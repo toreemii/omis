@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -7,6 +8,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -16,6 +19,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +30,8 @@ from models import (
     Exhibition,
     Order,
     OrderItem,
+    OrganizerService,
+    ModerationService,
     Product,
     Role,
     Ticket,
@@ -33,6 +39,12 @@ from models import (
 )
 from state_machine import InterfaceState, InterfaceStateMachine
 from ui.header import TopNavBar
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def is_valid_email(value: str) -> bool:
+    return bool(EMAIL_PATTERN.match(value.strip()))
 
 
 def make_placeholder_box(height: int = 120) -> QFrame:
@@ -83,8 +95,9 @@ class QrPlaceholderWidget(QWidget):
         painter.end()
 
 
+# 1. Вход / регистрация с проверкой email и выбором роли
 class LoginScreen(QWidget):
-    login_submitted = pyqtSignal(str, str)
+    login_submitted = pyqtSignal(str, str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -102,28 +115,58 @@ class LoginScreen(QWidget):
         left_box.addStretch()
 
         card, card_layout = make_card(28)
-        card.setFixedWidth(360)
-        title = QLabel("Вход")
+        card.setFixedWidth(380)
+        title = QLabel("Вход и выбор роли")
         title.setStyleSheet("font-size: 24px; font-weight: 800;")
+
         self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText("Email")
+        self.email_input.setPlaceholderText("Email (например, abcdgf@gmail.com)")
+
         self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Пароль")
+        self.password_input.setPlaceholderText("Пароль (необязательно)")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+
+        role_label = QLabel("Роль:")
+        role_label.setObjectName("MutedText")
+
+        self.role_combo = QComboBox()
+        self.role_combo.addItems([
+            "Посетитель",
+            "Организатор",
+            "Компания-участник",
+            "Модератор / Поддержка",
+        ])
+
+        self.error_lbl = QLabel("")
+        self.error_lbl.setStyleSheet("color: #C62828; font-weight: 600;")
+        self.error_lbl.setWordWrap(True)
+        self.error_lbl.hide()
 
         submit_btn = QPushButton("Войти")
         submit_btn.setObjectName("PrimaryBtn")
-        submit_btn.clicked.connect(
-            lambda: self.login_submitted.emit(self.email_input.text(), self.password_input.text())
-        )
+        submit_btn.clicked.connect(self._on_submit)
 
         card_layout.addWidget(title)
         card_layout.addWidget(self.email_input)
         card_layout.addWidget(self.password_input)
+        card_layout.addWidget(role_label)
+        card_layout.addWidget(self.role_combo)
+        card_layout.addWidget(self.error_lbl)
         card_layout.addWidget(submit_btn)
 
         layout.addLayout(left_box, stretch=1)
         layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+    def _on_submit(self) -> None:
+        email = self.email_input.text().strip()
+        if not is_valid_email(email):
+            self.error_lbl.setText(
+                "Ошибка проверки данных: введите корректный email вида name@domain.com."
+            )
+            self.error_lbl.show()
+            return
+        self.error_lbl.hide()
+        self.login_submitted.emit(email, self.password_input.text(), self.role_combo.currentText())
 
 
 class ExhibitionsListScreen(QWidget):
@@ -145,7 +188,7 @@ class ExhibitionsListScreen(QWidget):
         filter_row = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Поиск выставки или компании")
-        self.search_input.textChanged.connect(self._rebuild_cards)
+        self.search_input.textChanged.connect(self.refresh_exhibitions)
         filter_row.addWidget(self.search_input, stretch=1)
 
         self.filter_group = QButtonGroup(self)
@@ -166,13 +209,13 @@ class ExhibitionsListScreen(QWidget):
         root.addLayout(self.cards_layout)
         root.addStretch()
 
-        self._rebuild_cards()
+        self.refresh_exhibitions()
 
     def _set_filter(self, filter_name: str) -> None:
         self.current_filter = filter_name
-        self._rebuild_cards()
+        self.refresh_exhibitions()
 
-    def _rebuild_cards(self) -> None:
+    def refresh_exhibitions(self) -> None:
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item.widget():
@@ -196,12 +239,12 @@ class ExhibitionsListScreen(QWidget):
 
             name_lbl = QLabel(ex.name)
             name_lbl.setObjectName("CardTitle")
-            meta_lbl = QLabel(f"Дата · {ex.venue}")
+            meta_lbl = QLabel(f"{ex.start_date} · {ex.venue}")
             meta_lbl.setObjectName("MutedText")
 
             badge = QLabel(ex.format_label)
             badge.setObjectName("StatusBadge")
-            badge.setFixedWidth(130)
+            badge.setFixedWidth(150)
 
             open_btn = QPushButton("Открыть")
             open_btn.setObjectName("PrimaryBtn")
@@ -229,9 +272,9 @@ class ExhibitionDetailScreen(QWidget):
         left_card, left_layout = make_card(20)
         left_layout.addWidget(make_placeholder_box(190))
 
-        self.title_lbl = QLabel("Выставка «11111»")
+        self.title_lbl = QLabel("Выставка")
         self.title_lbl.setObjectName("ScreenTitle")
-        self.desc_lbl = QLabel("Описание выставки, программа мероприятия, дата и место проведения.")
+        self.desc_lbl = QLabel("Описание выставки.")
         self.desc_lbl.setObjectName("MutedText")
         self.desc_lbl.setWordWrap(True)
 
@@ -255,15 +298,19 @@ class ExhibitionDetailScreen(QWidget):
         live_hint.setObjectName("MutedText")
         live_hint.setWordWrap(True)
 
-        buy_btn = QPushButton("Купить билет")
-        buy_btn.setObjectName("PrimaryBtn")
-        buy_btn.clicked.connect(
+        self.sales_status_lbl = QLabel("Продажа билетов: открыта")
+        self.sales_status_lbl.setObjectName("StatusBadge")
+
+        self.buy_btn = QPushButton("Купить билет")
+        self.buy_btn.setObjectName("PrimaryBtn")
+        self.buy_btn.clicked.connect(
             lambda: self.buy_ticket_clicked.emit(self.exhibition) if self.exhibition else None
         )
 
         right_layout.addWidget(live_title)
         right_layout.addWidget(live_hint)
-        right_layout.addWidget(buy_btn)
+        right_layout.addWidget(self.sales_status_lbl)
+        right_layout.addWidget(self.buy_btn)
         right_layout.addStretch()
 
         root.addWidget(left_card, stretch=2)
@@ -273,6 +320,11 @@ class ExhibitionDetailScreen(QWidget):
         self.exhibition = exhibition
         self.title_lbl.setText(exhibition.name)
         self.desc_lbl.setText(exhibition.description)
+        sales_open = getattr(exhibition, "ticket_sales_open", True)
+        self.sales_status_lbl.setText(
+            "Продажа билетов: открыта" if sales_open else "Продажа билетов: закрыта"
+        )
+        self.buy_btn.setEnabled(sales_open)
 
         while self.companies_row.count():
             item = self.companies_row.takeAt(0)
@@ -305,7 +357,7 @@ class CompanyShowcaseScreen(QWidget):
         header_row.addWidget(logo)
 
         title_col = QVBoxLayout()
-        self.company_title = QLabel("Компания «00000»")
+        self.company_title = QLabel("Компания")
         self.company_title.setObjectName("ScreenTitle")
         self.company_sub = QLabel("Онлайн-витрина · Каталог товаров")
         self.company_sub.setObjectName("MutedText")
@@ -440,6 +492,9 @@ class CabinetScreen(QWidget):
     open_tickets = pyqtSignal()
     open_orders = pyqtSignal()
     open_cart = pyqtSignal()
+    open_role_panel = pyqtSignal()
+    role_changed = pyqtSignal(str)
+    logout_clicked = pyqtSignal()
 
     def __init__(self, user: User, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -463,15 +518,40 @@ class CabinetScreen(QWidget):
         self.phone_lbl = QLabel(user.phone)
         self.phone_lbl.setObjectName("MutedText")
 
+        switch_lbl = QLabel("Сменить роль:")
+        switch_lbl.setObjectName("MutedText")
+        self.role_switch = QComboBox()
+        self.role_switch.addItems([
+            "Посетитель",
+            "Организатор",
+            "Компания-участник",
+            "Модератор / Поддержка",
+        ])
+        self.role_switch.currentTextChanged.connect(self.role_changed.emit)
+
+        logout_btn = QPushButton("Сменить пользователя (Выйти)")
+        logout_btn.setObjectName("PrimaryBtn")
+        logout_btn.clicked.connect(self.logout_clicked.emit)
+
         p_layout.addWidget(avatar)
         p_layout.addWidget(self.name_lbl)
         p_layout.addWidget(self.role_lbl)
         p_layout.addWidget(self.email_lbl)
         p_layout.addWidget(self.phone_lbl)
+        p_layout.addWidget(switch_lbl)
+        p_layout.addWidget(self.role_switch)
+        p_layout.addWidget(logout_btn)
         p_layout.addStretch()
 
         right_col = QVBoxLayout()
         right_col.setSpacing(16)
+
+        r_card, r_layout = make_card(18)
+        r_layout.addWidget(QLabel("Панель возможностей роли", objectName="CardTitle"))
+        r_layout.addWidget(QLabel("Сценарии Use Case для выбранной роли.", objectName="MutedText"))
+        btn_r = QPushButton("Открыть панель роли", objectName="PrimaryBtn")
+        btn_r.clicked.connect(self.open_role_panel.emit)
+        r_layout.addWidget(btn_r)
 
         t_card, t_layout = make_card(18)
         t_layout.addWidget(QLabel("Мои билеты", objectName="CardTitle"))
@@ -492,6 +572,7 @@ class CabinetScreen(QWidget):
         btn_c.clicked.connect(self.open_cart.emit)
         c_layout.addWidget(btn_c)
 
+        right_col.addWidget(r_card)
         right_col.addWidget(t_card)
         right_col.addWidget(o_card)
         right_col.addWidget(c_card)
@@ -502,9 +583,14 @@ class CabinetScreen(QWidget):
 
     def set_user(self, user: User) -> None:
         self.user = user
+        role_name = user.role.name if user.role else "Посетитель"
         self.name_lbl.setText(user.full_name)
+        self.role_lbl.setText(role_name)
         self.email_lbl.setText(user.email)
         self.phone_lbl.setText(user.phone)
+        self.role_switch.blockSignals(True)
+        self.role_switch.setCurrentText(role_name)
+        self.role_switch.blockSignals(False)
 
 
 class MyTicketsScreen(QWidget):
@@ -600,7 +686,7 @@ class TicketDetailScreen(QWidget):
         self.meta_lbl = QLabel("Дата · Время · Место проведения")
         self.meta_lbl.setObjectName("MutedText")
         self.note_lbl = QLabel(
-            "Покажите QR-код на входе. Карта зала и маршрут до стенда «00000» доступны в билете."
+            "Покажите QR-код на входе. Карта зала и маршрут до стенда доступны в панели посетителя."
         )
         self.note_lbl.setObjectName("MutedText")
         self.note_lbl.setWordWrap(True)
@@ -691,40 +777,25 @@ class MyOrdersScreen(QWidget):
             self.orders_layout.addWidget(card)
 
 
-from PyQt6.QtWidgets import QComboBox
-
-
-ROLE_USE_CASES: dict[str, list[tuple[str, str]]] = {
-    "Посетитель": [
-        ("Найти выставку в каталоге", "Переход к каталогу выставок и поиску"),
-        ("Купить входной билет и получить QR-код", "Оформление билета и просмотр QR-кода"),
-        ("Запросить карту зала и маршрут до стенда", "Построение маршрута до стенда компании"),
-        ("Просмотреть витрину и оформить заказ", "Добавление товаров в корзину и оплата"),
-    ],
-    "Организатор": [
-        ("Создать мероприятие", "Заглушка создания страницы выставки/ярмарки"),
-        ("Добавить информацию", "Заглушка заполнения описания, даты и программы"),
-        ("Настроить продажу билетов", "Заглушка открытия и параметров продажи билетов"),
-    ],
-    "Компания-участник": [
-        ("Зарегистрироваться на выставке", "Заглушка подачи заявки на участие в выставке"),
-        ("Загрузить каталоги и фото", "Заглушка загрузки товаров, фото и PDF-каталогов"),
-        ("Получить подтверждение регистрации", "Заглушка статуса подтверждения участия"),
-        ("Получить уведомление о новой продаже", "Заглушка оповещения о заказе от посетителя"),
-    ],
-    "Модератор / Поддержка": [
-        ("Модерировать контент", "Заглушка проверки материалов выставок и компаний"),
-        ("Помогать при сбоях пользователям", "Заглушка обработки обращений и инцидентов"),
-    ],
-}
-
-
 class RoleWorkspaceScreen(QWidget):
-    """Экран сценариев выбранной роли по диаграмме вариантов использования."""
+    """Рабочее пространство роли с конкретными сценариями Use Case."""
 
-    def __init__(self, user: User, parent: QWidget | None = None) -> None:
+    exhibition_created = pyqtSignal(Exhibition)
+    company_media_updated = pyqtSignal(Company)
+
+    def __init__(
+        self,
+        user: User,
+        exhibitions: list[Exhibition],
+        companies: list[Company],
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.user = user
+        self.exhibitions = exhibitions
+        self.companies = companies
+        self.organizer_service = OrganizerService()
+        self.moderation_service = ModerationService()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(36, 26, 36, 26)
@@ -740,52 +811,321 @@ class RoleWorkspaceScreen(QWidget):
         header_row.addStretch()
         root.addLayout(header_row)
 
-        self.status_hint = QLabel("Выберите действие для проверки заглушки варианта использования.")
-        self.status_hint.setObjectName("MutedText")
-        root.addWidget(self.status_hint)
+        self.feedback_lbl = QLabel("Выберите действие для выбранной роли.")
+        self.feedback_lbl.setObjectName("MutedText")
+        self.feedback_lbl.setWordWrap(True)
+        root.addWidget(self.feedback_lbl)
 
-        self.cards_layout = QVBoxLayout()
-        self.cards_layout.setSpacing(12)
-        root.addLayout(self.cards_layout)
+        self.panel_stack = QStackedWidget()
+        self.visitor_panel = self._build_visitor_panel()
+        self.organizer_panel = self._build_organizer_panel()
+        self.company_panel = self._build_company_panel()
+        self.moderator_panel = self._build_moderator_panel()
+
+        self.panel_stack.addWidget(self.visitor_panel)
+        self.panel_stack.addWidget(self.organizer_panel)
+        self.panel_stack.addWidget(self.company_panel)
+        self.panel_stack.addWidget(self.moderator_panel)
+        root.addWidget(self.panel_stack)
         root.addStretch()
 
         self.refresh_role(user)
+
+    def _build_visitor_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(14)
+
+        card, c_layout = make_card(18)
+        c_layout.addWidget(QLabel("Запросить карту зала и построить маршрут до стенда", objectName="CardTitle"))
+        c_layout.addWidget(
+            QLabel("Выберите нужный стенд и нажмите «Запросить карту» или «Построить маршрут».", objectName="MutedText")
+        )
+
+        row = QHBoxLayout()
+        self.booth_combo = QComboBox()
+        for comp in self.companies:
+            booth = getattr(comp, "booth_code", None) or f"СТ-{comp.id:03d}"
+            self.booth_combo.addItem(f"{comp.name} (Стенд {booth})", comp)
+
+        map_btn = QPushButton("Запросить карту зала")
+        map_btn.setObjectName("PrimaryBtn")
+        map_btn.clicked.connect(self._on_request_hall_map)
+
+        route_btn = QPushButton("Построить маршрут до стенда")
+        route_btn.setObjectName("PrimaryBtn")
+        route_btn.clicked.connect(self._on_build_booth_route)
+
+        row.addWidget(self.booth_combo, stretch=1)
+        row.addWidget(map_btn)
+        row.addWidget(route_btn)
+        c_layout.addLayout(row)
+
+        self.map_box = QLabel("Схема зала: [Вход] ── Зона A ── [Стенд 00000] ── [Стенд 00001] ── [Стенд 00002]")
+        self.map_box.setStyleSheet("background-color: #B9DCFA; padding: 14px; font-weight: 700;")
+        self.map_box.setWordWrap(True)
+        c_layout.addWidget(self.map_box)
+
+        self.route_result_lbl = QLabel("Маршрут ещё не построен.")
+        self.route_result_lbl.setObjectName("MutedText")
+        self.route_result_lbl.setWordWrap(True)
+        c_layout.addWidget(self.route_result_lbl)
+
+        layout.addWidget(card)
+        return panel
+
+    def _on_request_hall_map(self) -> None:
+        self.map_box.setText(
+            "Карта зала загружена: Вход → Главный проход → Сектор выставок (Стенды 00000, 00001, 00002) → Выход."
+        )
+        self.feedback_lbl.setText("Карта зала получена.")
+
+    def _on_build_booth_route(self) -> None:
+        comp: Company | None = self.booth_combo.currentData()
+        if not comp:
+            return
+        booth = getattr(comp, "booth_code", None) or f"СТ-{comp.id:03d}"
+        self.route_result_lbl.setText(
+            f"Маршрут до «{comp.name}» (стенд {booth}): от главного входа пройдите прямо по галерее 40 м, "
+            f"поверните налево в сектор экспонентов — стенд {booth} будет справа."
+        )
+        self.feedback_lbl.setText(f"Построен маршрут до стенда {booth}.")
+
+    def _build_organizer_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(14)
+
+        create_card, cr_layout = make_card(18)
+        cr_layout.addWidget(QLabel("Создать мероприятие", objectName="CardTitle"))
+
+        form_row = QHBoxLayout()
+        self.event_name_input = QLineEdit()
+        self.event_name_input.setPlaceholderText("Название выставки или ярмарки")
+        self.event_venue_input = QLineEdit()
+        self.event_venue_input.setPlaceholderText("Площадка / формат")
+        self.event_format_combo = QComboBox()
+        self.event_format_combo.addItems(["Живая и онлайн", "Живая", "Онлайн"])
+        create_btn = QPushButton("Создать мероприятие")
+        create_btn.setObjectName("PrimaryBtn")
+        create_btn.clicked.connect(self._on_create_event)
+
+        form_row.addWidget(self.event_name_input, stretch=1)
+        form_row.addWidget(self.event_venue_input, stretch=1)
+        form_row.addWidget(self.event_format_combo)
+        form_row.addWidget(create_btn)
+        cr_layout.addLayout(form_row)
+        layout.addWidget(create_card)
+
+        info_card, inf_layout = make_card(18)
+        inf_layout.addWidget(QLabel("Добавить информацию и настроить продажу билетов", objectName="CardTitle"))
+
+        self.org_event_combo = QComboBox()
+        self._reload_organizer_events()
+
+        self.event_info_input = QTextEdit()
+        self.event_info_input.setPlaceholderText("Описание программы, расписание, правила участия...")
+        self.event_info_input.setFixedHeight(75)
+
+        add_info_btn = QPushButton("Добавить информацию")
+        add_info_btn.setObjectName("PrimaryBtn")
+        add_info_btn.clicked.connect(self._on_add_event_info)
+
+        self.ticket_sales_chk = QCheckBox("Открыть продажу билетов на мероприятие")
+        self.ticket_sales_chk.setChecked(True)
+        save_tickets_btn = QPushButton("Настроить продажу билетов")
+        save_tickets_btn.setObjectName("PrimaryBtn")
+        save_tickets_btn.clicked.connect(self._on_configure_ticket_sales)
+
+        inf_layout.addWidget(self.org_event_combo)
+        inf_layout.addWidget(self.event_info_input)
+        inf_layout.addWidget(add_info_btn)
+
+        t_row = QHBoxLayout()
+        t_row.addWidget(self.ticket_sales_chk)
+        t_row.addWidget(save_tickets_btn)
+        inf_layout.addLayout(t_row)
+
+        layout.addWidget(info_card)
+        return panel
+
+    def _reload_organizer_events(self) -> None:
+        current = self.org_event_combo.currentIndex()
+        self.org_event_combo.clear()
+        for ex in self.exhibitions:
+            self.org_event_combo.addItem(ex.name, ex)
+        if self.org_event_combo.count() > 0:
+            self.org_event_combo.setCurrentIndex(max(0, min(current, self.org_event_combo.count() - 1)))
+
+    def _on_create_event(self) -> None:
+        title = self.event_name_input.text().strip() or "Новое мероприятие"
+        venue = self.event_venue_input.text().strip() or "Выставочный зал"
+        fmt = self.event_format_combo.currentText()
+        new_ex = self.organizer_service.create_event(title, venue, fmt)
+        if self.companies:
+            new_ex.companies.append(self.companies[0])
+        self.exhibitions.append(new_ex)
+        self._reload_organizer_events()
+        self.org_event_combo.setCurrentIndex(self.org_event_combo.count() - 1)
+        self.event_name_input.clear()
+        self.event_venue_input.clear()
+        self.exhibition_created.emit(new_ex)
+        self.feedback_lbl.setText(f"Создано мероприятие «{new_ex.name}» ({new_ex.format_label}).")
+
+    def _on_add_event_info(self) -> None:
+        ex: Exhibition | None = self.org_event_combo.currentData()
+        text = self.event_info_input.toPlainText().strip()
+        if not ex:
+            return
+        self.organizer_service.add_event_info(ex, text or f"Обновлённая программа мероприятия «{ex.name}».")
+        self.event_info_input.clear()
+        self.exhibition_created.emit(ex)
+        self.feedback_lbl.setText(f"Информация для «{ex.name}» обновлена.")
+
+    def _on_configure_ticket_sales(self) -> None:
+        ex: Exhibition | None = self.org_event_combo.currentData()
+        if not ex:
+            return
+        enabled = self.ticket_sales_chk.isChecked()
+        ex.ticket_sales_open = enabled
+        msg = self.organizer_service.configure_ticket_sales(ex, enabled)
+        self.feedback_lbl.setText(msg)
+
+    def _build_company_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(14)
+
+        card, c_layout = make_card(18)
+        c_layout.addWidget(QLabel("Загрузить каталоги и фото / Зарегистрироваться на выставке", objectName="CardTitle"))
+
+        self.comp_select_combo = QComboBox()
+        for comp in self.companies:
+            self.comp_select_combo.addItem(comp.name, comp)
+
+        self.comp_ex_combo = QComboBox()
+        for ex in self.exhibitions:
+            self.comp_ex_combo.addItem(ex.name, ex)
+
+        reg_btn = QPushButton("Зарегистрироваться на выставке")
+        reg_btn.setObjectName("PrimaryBtn")
+        reg_btn.clicked.connect(self._on_company_register)
+
+        self.photo_name_input = QLineEdit()
+        self.photo_name_input.setPlaceholderText("Название фото или каталога (например, catalog_2026.pdf / photo_stand.jpg)")
+
+        upload_btn = QPushButton("Загрузить каталоги и фото")
+        upload_btn.setObjectName("PrimaryBtn")
+        upload_btn.clicked.connect(self._on_upload_catalog_photo)
+
+        notif_btn = QPushButton("Проверить подтверждение и уведомления о продажах")
+        notif_btn.setObjectName("PrimaryBtn")
+        notif_btn.clicked.connect(self._on_company_notifications)
+
+        c_layout.addWidget(QLabel("Компания:", objectName="MutedText"))
+        c_layout.addWidget(self.comp_select_combo)
+        c_layout.addWidget(QLabel("Выставка:", objectName="MutedText"))
+        c_layout.addWidget(self.comp_ex_combo)
+        c_layout.addWidget(reg_btn)
+        c_layout.addWidget(self.photo_name_input)
+        c_layout.addWidget(upload_btn)
+        c_layout.addWidget(notif_btn)
+
+        layout.addWidget(card)
+        return panel
+
+    def _on_company_register(self) -> None:
+        comp: Company | None = self.comp_select_combo.currentData()
+        ex: Exhibition | None = self.comp_ex_combo.currentData()
+        if not comp or not ex:
+            return
+        if comp not in ex.companies:
+            ex.companies.append(comp)
+            self.exhibition_created.emit(ex)
+        self.feedback_lbl.setText(
+            f"Подтверждение регистрации: «{comp.name}» зарегистрирована на «{ex.name}»."
+        )
+
+    def _on_upload_catalog_photo(self) -> None:
+        comp: Company | None = self.comp_select_combo.currentData()
+        if not comp:
+            return
+        label = self.photo_name_input.text().strip() or "Фото стенда и каталог"
+        new_prod = Product(
+            id=len(comp.products) + 100,
+            name=label,
+            description="Загружено компанией-участником",
+            price=Decimal("50.00"),
+            stock=10,
+        )
+        comp.products.append(new_prod)
+        self.photo_name_input.clear()
+        self.company_media_updated.emit(comp)
+        self.feedback_lbl.setText(f"Материал «{label}» загружен в витрину «{comp.name}».")
+
+    def _on_company_notifications(self) -> None:
+        comp: Company | None = self.comp_select_combo.currentData()
+        name = comp.name if comp else "Компания"
+        self.feedback_lbl.setText(
+            f"[{name}] Регистрация подтверждена. Новое уведомление о продаже: оформлен заказ на 120 BYN."
+        )
+
+    def _build_moderator_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(14)
+
+        card, c_layout = make_card(18)
+        c_layout.addWidget(QLabel("Модерация контента и помощь при сбоях", objectName="CardTitle"))
+
+        self.mod_item_input = QLineEdit()
+        self.mod_item_input.setPlaceholderText("Карточка выставки, каталог или фото на проверку")
+
+        mod_btn = QPushButton("Модерировать контент")
+        mod_btn.setObjectName("PrimaryBtn")
+        mod_btn.clicked.connect(self._on_moderate)
+
+        self.issue_input = QLineEdit()
+        self.issue_input.setPlaceholderText("Описание сбоя или обращения пользователя")
+
+        support_btn = QPushButton("Помогать при сбоях пользователям")
+        support_btn.setObjectName("PrimaryBtn")
+        support_btn.clicked.connect(self._on_assist)
+
+        c_layout.addWidget(self.mod_item_input)
+        c_layout.addWidget(mod_btn)
+        c_layout.addWidget(self.issue_input)
+        c_layout.addWidget(support_btn)
+
+        layout.addWidget(card)
+        return panel
+
+    def _on_moderate(self) -> None:
+        item = self.mod_item_input.text().strip() or "Витрина участника"
+        self.feedback_lbl.setText(self.moderation_service.moderate_content(item))
+        self.mod_item_input.clear()
+
+    def _on_assist(self) -> None:
+        issue = self.issue_input.text().strip() or "Ошибка отображения страницы"
+        self.feedback_lbl.setText(self.moderation_service.assist_user(self.user.email, issue))
+        self.issue_input.clear()
 
     def refresh_role(self, user: User) -> None:
         self.user = user
         role_name = user.role.name if user.role else "Посетитель"
         self.role_badge.setText(role_name)
         self.title_lbl.setText(f"Панель роли — {role_name}")
+        self._reload_organizer_events()
 
-        while self.cards_layout.count():
-            item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        if role_name == "Организатор":
+            self.panel_stack.setCurrentWidget(self.organizer_panel)
+        elif role_name == "Компания-участник":
+            self.panel_stack.setCurrentWidget(self.company_panel)
+        elif role_name == "Модератор / Поддержка":
+            self.panel_stack.setCurrentWidget(self.moderator_panel)
+        else:
+            self.panel_stack.setCurrentWidget(self.visitor_panel)
 
-        for action_title, action_desc in ROLE_USE_CASES.get(role_name, ROLE_USE_CASES["Посетитель"]):
-            card, c_layout = make_card(14)
-            row = QHBoxLayout()
-
-            text_col = QVBoxLayout()
-            t_lbl = QLabel(action_title)
-            t_lbl.setObjectName("CardTitle")
-            d_lbl = QLabel(action_desc)
-            d_lbl.setObjectName("MutedText")
-            text_col.addWidget(t_lbl)
-            text_col.addWidget(d_lbl)
-
-            run_btn = QPushButton("Выполнить")
-            run_btn.setObjectName("PrimaryBtn")
-            run_btn.clicked.connect(
-                lambda _, name=action_title: self.status_hint.setText(
-                    f"[{role_name}] Запущен сценарий «{name}» (заглушка)."
-                )
-            )
-
-            row.addLayout(text_col, stretch=1)
-            row.addWidget(run_btn)
-            c_layout.addLayout(row)
-            self.cards_layout.addWidget(card)
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -795,7 +1135,6 @@ class MainWindow(QMainWindow):
 
         self.state_machine = InterfaceStateMachine(InterfaceState.LOGIN)
 
-        # Демонстрационные данные по сценариям отчёта
         self.user = User(
             id=1,
             full_name="ФИО пользователя",
@@ -819,6 +1158,7 @@ class MainWindow(QMainWindow):
         )
         comp_1 = Company(id=2, name="Компания «00001»", description="Каталог товаров", booth_code="00001")
         comp_2 = Company(id=3, name="Компания «00002»", description="Каталог товаров", booth_code="00002")
+        self.companies = [comp_0, comp_1, comp_2]
 
         self.exhibitions = [
             Exhibition(
@@ -893,6 +1233,7 @@ class MainWindow(QMainWindow):
         self.tickets_screen = MyTicketsScreen(self.tickets)
         self.ticket_detail_screen = TicketDetailScreen()
         self.orders_screen = MyOrdersScreen(self.orders)
+        self.role_workspace_screen = RoleWorkspaceScreen(self.user, self.exhibitions, self.companies)
 
         self._state_to_widget: dict[InterfaceState, QWidget] = {
             InterfaceState.LOGIN: self.login_screen,
@@ -904,6 +1245,7 @@ class MainWindow(QMainWindow):
             InterfaceState.MY_TICKETS: self.tickets_screen,
             InterfaceState.TICKET_QR: self.ticket_detail_screen,
             InterfaceState.MY_ORDERS: self.orders_screen,
+            InterfaceState.ROLE_WORKSPACE: self.role_workspace_screen,
         }
 
         for widget in self._state_to_widget.values():
@@ -914,7 +1256,7 @@ class MainWindow(QMainWindow):
 
     def _wire_signals(self) -> None:
         self.login_screen.login_submitted.connect(
-            lambda email, _: self._on_login(email)
+            lambda email, _, role_name: self._on_login(email, role_name)
         )
         self.exhibitions_screen.open_exhibition.connect(self._on_open_exhibition)
         self.exhibition_detail_screen.open_company.connect(self._on_open_company)
@@ -922,6 +1264,9 @@ class MainWindow(QMainWindow):
         self.showcase_screen.add_to_cart_clicked.connect(self._on_add_to_cart)
         self.cart_screen.pay_clicked.connect(self._on_pay_order)
 
+        self.cabinet_screen.open_role_panel.connect(
+            lambda: self.navigate_to(InterfaceState.ROLE_WORKSPACE)
+        )
         self.cabinet_screen.open_tickets.connect(
             lambda: self.navigate_to(InterfaceState.MY_TICKETS)
         )
@@ -931,7 +1276,43 @@ class MainWindow(QMainWindow):
         self.cabinet_screen.open_cart.connect(
             lambda: self.navigate_to(InterfaceState.CART_CHECKOUT)
         )
+        self.cabinet_screen.role_changed.connect(self._on_role_changed)
+        self.cabinet_screen.logout_clicked.connect(
+            lambda: self.navigate_to(InterfaceState.LOGIN)
+        )
         self.tickets_screen.show_qr_clicked.connect(self._on_show_qr)
+
+        self.role_workspace_screen.exhibition_created.connect(
+            lambda _: self.exhibitions_screen.refresh_exhibitions()
+        )
+        self.role_workspace_screen.company_media_updated.connect(self._on_company_media_updated)
+
+    def _on_company_media_updated(self, comp: Company) -> None:
+        if self.showcase_screen.company is comp:
+            self.showcase_screen.set_company(comp)
+
+    def _apply_role(self, role_name: str) -> None:
+        role_ids = {
+            "Посетитель": 1,
+            "Организатор": 2,
+            "Компания-участник": 3,
+            "Модератор / Поддержка": 4,
+        }
+        self.user.role = Role(id=role_ids.get(role_name, 1), name=role_name)
+        self.cabinet_screen.set_user(self.user)
+        self.role_workspace_screen.refresh_role(self.user)
+
+    def _on_role_changed(self, role_name: str) -> None:
+        self._apply_role(role_name)
+
+    def _on_login(self, email: str, role_name: str = "Посетитель") -> None:
+        if email.strip():
+            self.user.email = email.strip()
+        self._apply_role(role_name)
+        if role_name == "Посетитель":
+            self.navigate_to(InterfaceState.EXHIBITIONS_LIST)
+        else:
+            self.navigate_to(InterfaceState.ROLE_WORKSPACE)
 
     def navigate_to(self, target: InterfaceState) -> None:
         if target == InterfaceState.EXIT:
@@ -939,15 +1320,11 @@ class MainWindow(QMainWindow):
             return
         widget = self._state_to_widget.get(target)
         if widget is not None:
+            if target == InterfaceState.ROLE_WORKSPACE:
+                self.role_workspace_screen.refresh_role(self.user)
             self.state_machine.transition(target)
             self.nav_bar.setVisible(target != InterfaceState.LOGIN)
             self.stack.setCurrentWidget(widget)
-
-    def _on_login(self, email: str) -> None:
-        if email.strip():
-            self.user.email = email.strip()
-            self.cabinet_screen.set_user(self.user)
-        self.navigate_to(InterfaceState.EXHIBITIONS_LIST)
 
     def _on_open_exhibition(self, exhibition: Exhibition) -> None:
         self.exhibition_detail_screen.set_exhibition(exhibition)

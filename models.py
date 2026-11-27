@@ -477,3 +477,33 @@ class OrganizerService:
 
     def configure_ticket_sales(self, exhibition: Exhibition) -> None:
         exhibition.open_ticket_sales()
+
+class ModerationService:
+    def moderate_content(self, item_label: str) -> str:
+        return f"Контент «{item_label}» проверен и одобрен."
+
+    def assist_user(self, user_email: str, issue: str) -> str:
+        return f"Обращение от {user_email or 'пользователя'} по вопросу «{issue}» взято в работу."
+
+
+class OrganizerService:
+    def create_event(self, title: str, venue: str, format_label: str = "Живая и онлайн") -> Exhibition:
+        return Exhibition(
+            id=10000 + int(date.today().strftime("%d%m")) % 8999,
+            name=title.strip() or "Новое мероприятие",
+            description="Мероприятие создано организатором.",
+            start_date=date.today(),
+            end_date=date.today(),
+            venue=venue.strip() or "Выставочный центр",
+            format_label=format_label,
+        )
+
+    def add_event_info(self, exhibition: Exhibition, info: str) -> None:
+        if info.strip():
+            exhibition.description = info.strip()
+
+    def configure_ticket_sales(self, exhibition: Exhibition, enabled: bool = True) -> str:
+        if enabled:
+            exhibition.open_ticket_sales()
+            return f"Продажа билетов для «{exhibition.name}» открыта."
+        return f"Продажа билетов для «{exhibition.name}» приостановлена."
